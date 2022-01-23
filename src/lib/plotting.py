@@ -5,7 +5,7 @@
 
 import matplotlib
 # matplotlib.use('TkAgg')
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 import matplotlib.pyplot
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -306,7 +306,7 @@ class Visualizations():
 
 
 	def draw_all_plots_one_dim(self, data_dict, model,
-		plot_name = "", save = False, experimentID = 0.):
+		plot_name, save, experimentID):
 
 		data =  data_dict["data_to_predict"]
 		time_steps = data_dict["tp_to_predict"]
@@ -351,7 +351,7 @@ class Visualizations():
 				data_for_plotting[traj_id].unsqueeze(0), observed_time_steps, 
 				mask = mask_for_plotting[traj_id].unsqueeze(0),
 				min_y = min_y, max_y = max_y, #title="True trajectories", 
-				marker = 'o', linestyle='', dim_to_show = dim_to_show,
+				marker = 'o', linestyle='-', dim_to_show = dim_to_show,
 				color = cmap(2))
 			# Plot reconstructions
 			plot_trajectories(self.ax_traj[traj_id],

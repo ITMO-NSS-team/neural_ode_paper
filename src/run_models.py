@@ -5,7 +5,7 @@
 
 import sys
 import matplotlib
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 
 import time
 import argparse

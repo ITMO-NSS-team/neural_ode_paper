@@ -8,10 +8,10 @@ from __future__ import absolute_import, division
 from __future__ import print_function
 import os
 import matplotlib
-if os.path.exists("/Users/yulia"):
-	matplotlib.use('TkAgg')
-else:
-	matplotlib.use('Agg')
+# if os.path.exists("/Users/yulia"):
+# 	matplotlib.use('TkAgg')
+# else:
+# 	matplotlib.use('Agg')
 
 import numpy as np
 import numpy.random as npr
