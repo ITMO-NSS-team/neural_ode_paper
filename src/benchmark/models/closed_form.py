@@ -20,20 +20,29 @@ class ClosedFormModel(Model, nn.Module):
         self.n_epochs = n_epochs
         self.n_iters = n_iters
 
-        self.coefs = nn.Parameter(5 * torch.rand(size, 2), requires_grad=False)
-        self.coef_loss_threshold = coef_loss_threshold
-        self.t_inference = nn.LSTM(input_size=1, hidden_size=hidden_size, batch_first=True)
-        self.C_inference = nn.LSTM(input_size=1, hidden_size=hidden_size, batch_first=True)
-        self.t_converter = nn.Sequential(nn.Linear(hidden_size, hidden_size, bias=True), nn.ReLU(),
-                                         nn.Linear(hidden_size, 1, bias=True))
-        self.C_converter = nn.Sequential(nn.Linear(hidden_size, hidden_size, bias=True), nn.ReLU(),
-                                         nn.Linear(hidden_size, 2 * size + 1, bias=True))
-        self.refinement_lstm = nn.LSTM(input_size=1, hidden_size=hidden_size, batch_first=True)
-        self.refinement_fcnn = nn.Linear(hidden_size, 1, bias=True)
+        self.coef_loss_threshold, self.hidden_size, self.size = coef_loss_threshold, hidden_size, size
 
-        self.t_0 = nn.Parameter(torch.zeros(1))
-        self.C = nn.Parameter(torch.rand(2 * size + 1) - 1 / 2)
+        self.coefs, self.coef_loss_threshold, self.t_inference, self.C_inference, self.t_converter, self.C_converter, \
+        self.refinement_lstm, self.refinement_fcnn, self.t_0, self.C = self.initialize_trainable_fields(
+            coef_loss_threshold, hidden_size, size)
+
         self.integration_limit = integration_limit
+
+    def initialize_trainable_fields(self, coef_loss_threshold, hidden_size, size):
+        coefs = nn.Parameter(5 * torch.rand(size, 2), requires_grad=False)
+        coef_loss_threshold = coef_loss_threshold
+        t_inference = nn.LSTM(input_size=1, hidden_size=hidden_size, batch_first=True)
+        C_inference = nn.LSTM(input_size=1, hidden_size=hidden_size, batch_first=True)
+        t_converter = nn.Sequential(nn.Linear(hidden_size, hidden_size, bias=True), nn.ReLU(),
+                                    nn.Linear(hidden_size, 1, bias=True))
+        C_converter = nn.Sequential(nn.Linear(hidden_size, hidden_size, bias=True), nn.ReLU(),
+                                    nn.Linear(hidden_size, 2 * size + 1, bias=True))
+        refinement_lstm = nn.LSTM(input_size=1, hidden_size=hidden_size, batch_first=True)
+        refinement_fcnn = nn.Linear(hidden_size, 1, bias=True)
+        t_0 = nn.Parameter(torch.zeros(1))
+        C = nn.Parameter(torch.rand(2 * size + 1) - 1 / 2)
+        return coefs, coef_loss_threshold, t_inference, C_inference, t_converter, C_converter, refinement_lstm, \
+               refinement_fcnn, t_0, C
 
     def __call__(self, *args, **kwargs):
         data = args
@@ -133,5 +142,4 @@ class ClosedFormModel(Model, nn.Module):
         return np.mean(losses)
 
     def reset(self):
-        pass
-        # TODO
+        self.initialize_trainable_fields(self.coef_loss_threshold, self.hidden_size, self.size)

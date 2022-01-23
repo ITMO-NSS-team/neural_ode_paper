@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from itertools import cycle
 
+import matplotlib
 import numpy as np
 import torch
 from sklearn.metrics import mean_squared_error
@@ -11,25 +12,26 @@ from torch.distributions import Normal
 from benchmark.models.common import Model, batch_generator
 from lib import utils
 from lib.create_latent_ode_model import create_LatentODE_model
+from lib.plotting import Visualizations
 
 logger = logging.getLogger('latent_ode')
 logger.setLevel(logging.DEBUG)
 
 
 class NeuralOdeModel(Model):
-    def __init__(self, batch_size, num_batches=10000, lr=2e-3, ):
-        self.device = torch.device('cuda:0')
+    def __init__(self, batch_size, out_steps, num_batches=10000, lr=2e-3):
+        self.device = torch.device('cpu')
         self.args, self.model = self.create_latent_ode_model()
         self.experimentID = str(datetime.now())
         self.lr = lr
         self.batch_size = batch_size
         self.num_batches = num_batches
-        self.img_path = None  # TODO
-        self.viz = None  # TODO
+        self.out_steps = out_steps
+        self.viz = Visualizations(self.device)
 
     def create_latent_ode_model(self, input_dim=1, obsrv_std=0.01, z0_mean=0.0, z0_std=1.):
         class Args:
-            def __init__(self, latents=30, poisson=False, gen_layers=1, units=100, rec_dims=20, rec_layers=1,
+            def __init__(self, latents=15, poisson=False, gen_layers=1, units=100, rec_dims=20, rec_layers=1,
                          gru_units=100, z0_encoder='odernn', classif=False, linear_classif=False, dataset=None):
                 self.latents = latents
                 self.poisson = poisson
@@ -89,7 +91,7 @@ class NeuralOdeModel(Model):
                                                   experimentID=self.experimentID, device=self.device,
                                                   n_traj_samples=self.batch_size, kl_coef=kl_coef)
         now = datetime.now()
-        message = f'''{now}: Epoch {itr:04d} [Test seq (cond on sampled tp)]
+        message = f'''{now}: Itr {itr:04d} [Test seq (cond on sampled tp)]
                               | Loss {test_res["loss"].detach():.6f} | Likelihood {test_res["likelihood"].detach():.6f}
                               | KL fp {test_res["kl_first_p"]:.4f} | FP STD {test_res["std_first_p"]:.4f}|'''
         logger.info(f'Experiment {self.experimentID}')
@@ -97,48 +99,67 @@ class NeuralOdeModel(Model):
         logger.info(f'KL coef: {kl_coef}')
         logger.info(f'Train loss (one batch): {train_res["loss"].detach()}')
         logger.info(f'Train CE loss (one batch): {train_res["ce_loss"].detach()}')
-        logger.info(f'Classification AUC (TEST): {test_res["auc"]:.4f}')
         logger.info(f'Test MSE: {test_res["mse"]:.4f}')
-        logger.info(f'Classification accuracy (TRAIN): {train_res["accuracy"]:.4f}')
-        logger.info(f'Classification accuracy (TEST): {test_res["accuracy"]:.4f}')
-        logger.info(f'Poisson likelihood: {test_res["pois_likelihood"]}')
         logger.info(f'CE loss: {test_res["ce_loss"]}')
 
     def visualize_predictions(self, itr, test_dict):
         now = datetime.now()
         print(f"{now}: plotting....")
         plot_id = itr // 10
-        self.viz.draw_all_plots_one_dim(test_dict, self.model, f'{self.img_path}_{self.experimentID}_{plot_id:03d}.png',
-                                        self.experimentID, save=True)
+        self.viz.draw_all_plots_one_dim(test_dict, self.model, f'{self.experimentID}_{plot_id:03d}.png',
+                                        True, self.experimentID)
         now = datetime.now()
         print(f"{now}: finished plotting")
 
     def get_checkpoint(self):
-        ckpt_path = os.path.join('experiments/', "experiment_" + str(self.experimentID) + '.ckpt')
-        utils.get_ckpt_model(ckpt_path, self.model, self.device)
+        experiments_dir = 'experiments'
+        ckpt_path = os.path.join(experiments_dir, "experiment_" + str(self.experimentID) + '.ckpt')
+        if os.path.exists(ckpt_path):
+            utils.get_ckpt_model(ckpt_path, self.model, self.device)
+        else:
+            os.makedirs(experiments_dir, exist_ok=True)
         return ckpt_path
 
     def to_batch_dict(self, batch):
-        batch_input, batch_labels = batch
-        batch_dict = {
-            'observed_data': torch.from_numpy(batch_input.copy()).type('float32').to(self.device),
-            'observed_tp': torch.from_numpy(np.linspace(0, 0.5, batch_input.shape[1])).type('float32').to(self.device),
-            'data_to_predict': torch.from_numpy(batch_labels.copy()).type('float32').to(self.device),
-            'tp_to_predict': torch.from_numpy(np.linspace(0.5, 3.0, batch_labels.shape[1])).type('float32').to(
-                self.device),
-            'observed_mask': torch.from_numpy(np.ones_like(batch_input)).type('float32').to(self.device),
-            'mask_predicted_data': None,
-            'labels': None,
-            'mode': 'extrap'
-        }
+        if len(batch) > 1:
+            batch_input, batch_labels = batch
+            batch_dict = {
+                'observed_data': torch.from_numpy(batch_input.copy()).type(torch.float32).to(self.device),
+                'observed_tp': torch.from_numpy(np.linspace(0, 0.5, batch_input.shape[1])).type(torch.float32)
+                    .to(self.device),
+                'data_to_predict': torch.from_numpy(batch_labels.copy()).type(torch.float32).to(self.device),
+                'tp_to_predict': torch.from_numpy(np.linspace(0.5, 1.0, batch_labels.shape[1])).type(torch.float32)
+                    .to(self.device),
+                'observed_mask': torch.from_numpy(np.ones_like(batch_input)).type(torch.float32).to(self.device),
+                'mask_predicted_data': None,
+                'labels': None,
+                'mode': 'extrap'
+            }
+        else:
+            batch_input, = batch
+            batch_dict = {
+                'observed_data': batch_input.type(torch.float32).to(self.device),
+                'observed_tp': torch.from_numpy(np.linspace(0, 0.5, batch_input.shape[1])).type(torch.float32)
+                    .to(self.device),
+                'tp_to_predict': torch.from_numpy(np.linspace(0.5, 1.0, self.out_steps)).type(torch.float32)
+                    .to(self.device),
+                'observed_mask': torch.from_numpy(np.ones_like(batch_input)).type(torch.float32).to(self.device),
+                'mask_predicted_data': None,
+                'labels': None,
+                'mode': 'extrap'
+            }
         return batch_dict
 
     def __call__(self, *args, **kwargs):
-        pred_y = self.predict_neural(*args)
+        pred_y = self.predict_neural(args)
         return pred_y.cpu().detach().numpy()[0]
 
-    def predict_neural(self, args):
-        gen = batch_generator(args, self.batch_size)
+    def predict_neural(self, args, custom_batch_size=None):
+        if custom_batch_size is not None:
+            batch_size = custom_batch_size
+        else:
+            batch_size = self.batch_size
+        gen = batch_generator(args, batch_size)
         batch_dict = self.to_batch_dict(next(gen))
         pred_y, info = self.model.get_reconstruction(batch_dict["tp_to_predict"], batch_dict["observed_data"],
                                                      batch_dict["observed_tp"], mask=batch_dict["observed_mask"],
@@ -147,9 +168,12 @@ class NeuralOdeModel(Model):
 
     def evaluate(self, data):
         _, y_eval = data
-        pred_y = self.predict_neural(data)
+        custom_batch_size = len(y_eval)
+        pred_y = self.predict_neural(data, custom_batch_size)
         pred_y = pred_y.cpu().detach().numpy()[0]
-        return mean_squared_error(y_eval.reshape(self.batch_size, -1), pred_y.reshape(self.batch_size, -1))
+        return mean_squared_error(y_eval.reshape(custom_batch_size, -1),
+                                  pred_y.reshape(custom_batch_size, -1))
 
     def reset(self):
-        pass
+        self.args, self.model = self.create_latent_ode_model()
+        self.experimentID = str(datetime.now())

@@ -41,7 +41,7 @@ if __name__ == '__main__':
         'linear': DenseModel(args.out_steps, args.batch_size, args.max_epochs),
         'lstm': LSTMModel(args.out_steps, args.batch_size, args.max_epochs),
         'autoreg': AutoRegressiveModel(args.out_steps),
-        'latent_ode': NeuralOdeModel(args.batch_size),
+        'latent_ode': NeuralOdeModel(args.batch_size, args.out_steps),
         'closed_form': ClosedFormModel(args.out_steps, args.n_closed_form_components, args.closed_form_hidden_size,
                                        args.batch_size)
     }
