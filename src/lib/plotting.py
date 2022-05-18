@@ -105,7 +105,7 @@ def plot_vector_field(ax, odefunc, latent_dim, device):
 	zs = torch.from_numpy(np.stack([x, y], -1).reshape(K * K, 2)).to(device, torch.float32)
 	if latent_dim > 2:
 		# Plots dimensions 0 and 2
-		zs = torch.cat((zs, torch.zeros(K * K, latent_dim-2)), 1)
+		zs = torch.cat((zs, torch.zeros(K * K, latent_dim-2).to(device)), 1)
 	dydt = odefunc(0, zs)
 	dydt = -dydt.cpu().detach().numpy()
 	if latent_dim > 2:
@@ -175,7 +175,7 @@ class Visualizations():
 		self.ax_traj_from_prior = self.fig.add_subplot(2,3,6, frameon=False)
 
 		self.plot_limits = {}
-		plt.show(block=False)
+		# plt.show(block=False)
 
 	def set_plot_lims(self, ax, name):
 		if name not in self.plot_limits:
@@ -443,7 +443,7 @@ class Visualizations():
 		
 		self.ax_latent_traj.set_ylabel("z")
 		self.ax_latent_traj.set_title("Latent trajectories z(t) (latent space)", pad = 20)
-		self.ax_latent_traj.legend(custom_labels.values(), custom_labels.keys(), loc = 'lower left')
+		# self.ax_latent_traj.legend(custom_labels.values(), custom_labels.keys(), loc = 'lower left')
 		self.set_plot_lims(self.ax_latent_traj, "latent_traj")
 
 		################################################

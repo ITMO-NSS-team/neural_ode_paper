@@ -1,7 +1,10 @@
 import tensorflow as tf
 
+tf.get_logger().setLevel('ERROR')
 from benchmark.models.common import Model
 from benchmark.utils import compile_and_fit
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Reshape, Lambda
 
 
 # Adapted from https://www.tensorflow.org/tutorials/structured_data/time_series
@@ -37,11 +40,11 @@ class DenseModel(Model):
         self.epochs = epochs
 
     def create_model(self, hidden_size, out_steps):
-        return tf.keras.Sequential([
-            tf.keras.layers.Lambda(lambda x: x[:, -1:, :]),
-            tf.keras.layers.Dense(hidden_size, activation='relu'),
-            tf.keras.layers.Dense(out_steps),
-            tf.keras.layers.Reshape([out_steps, 1])
+        return Sequential([
+            Lambda(lambda x: x[:, -1:, :]),
+            Dense(hidden_size, activation='relu'),
+            Dense(out_steps),
+            Reshape([out_steps, 1])
         ])
 
     def __call__(self, *args, **kwargs):
@@ -67,13 +70,13 @@ class LSTMModel(Model):
         self.batch_size = batch_size
         self.epochs = epochs
 
-    def create_model(self, hidden_size_dense, hidden_size_lstm, out_steps):
-        return tf.keras.Sequential([
-            tf.keras.layers.LSTM(hidden_size_lstm, return_sequences=False),
-            tf.keras.layers.Dense(hidden_size_dense),
-            tf.keras.layers.Dense(out_steps,
-                                  kernel_initializer=tf.keras.initializers.zeros()),
-            tf.keras.layers.Reshape([out_steps, 1])
+    @staticmethod
+    def create_model(hidden_size_dense, hidden_size_lstm, out_steps):
+        return Sequential([
+            LSTM(hidden_size_lstm, return_sequences=False),
+            Dense(hidden_size_dense),
+            Dense(out_steps, kernel_initializer=tf.keras.initializers.zeros()),
+            Reshape([out_steps, 1])
         ])
 
     def __call__(self, *args, **kwargs):
@@ -86,6 +89,3 @@ class LSTMModel(Model):
     def evaluate(self, data):
         X_eval, y_eval = data
         return self.multi_lstm_model.evaluate(X_eval, y_eval, steps=1)[1]
-
-    def reset(self):
-        self.multi_lstm_model = self.create_model(self.hidden_size_dense, self.hidden_size_lstm, self.out_steps)

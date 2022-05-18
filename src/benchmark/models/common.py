@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from itertools import cycle
 
+import numpy as np
 import torch
 
 
@@ -11,10 +12,6 @@ class Model(ABC):
 
     @abstractmethod
     def evaluate(self, data):
-        pass
-
-    @abstractmethod
-    def reset(self):
         pass
 
 
@@ -32,6 +29,9 @@ def batch_generator(ds, batch_size, use_torch=False):
             return cycle(zip(ds_input, ds_labels))
     else:
         ds_input, = ds
-        ds_input = ds_input[:ds_input.shape[0] - ds_input.shape[0] % batch_size]
-        ds_input = ds_input.reshape((-1, batch_size, ds_input.shape[1], 1))
+        if len(ds_input) > batch_size:
+            ds_input = ds_input[:ds_input.shape[0] - ds_input.shape[0] % batch_size]
+            ds_input = ds_input.reshape((-1, batch_size, ds_input.shape[1], 1))
+        else:
+            ds_input = np.expand_dims(ds_input, axis=0)
         return cycle(zip(torch.from_numpy(ds_input.copy()).type(torch.float32)))

@@ -1,3 +1,6 @@
+import os
+from datetime import datetime
+
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,7 +10,7 @@ from tensorflow.python.keras.models import Model
 from tqdm import tqdm
 
 
-def get_dataset(dataset='temp'):
+def get_dataset(dataset='temp', noise_level=0):
     if dataset == 'temp':
         df = load_temp_dataset()
     elif dataset == 'venice':
@@ -18,18 +21,18 @@ def get_dataset(dataset='temp'):
 
     n = len(df)
     train_ratio = 0.7
-    test_ratio = 0.2
+    val_ratio = 0.2
+
+    df_mean = df.mean()
+    df_std = df.std()
+
+    df = (df - df_mean) / df_std
+
+    df += np.random.normal(0, float(noise_level), size=df.shape)
 
     train_df = df[:int(n * train_ratio)]
-    val_df = df[int(n * train_ratio):int(n * (train_ratio + test_ratio))]
-    test_df = df[int(n * (train_ratio + test_ratio)):]
-
-    train_mean = train_df.mean()
-    train_std = train_df.std()
-
-    train_df = (train_df - train_mean) / train_std
-    val_df = (val_df - train_mean) / train_std
-    test_df = (test_df - train_mean) / train_std
+    val_df = df[int(n * train_ratio):int(n * (train_ratio + val_ratio))]
+    test_df = df[int(n * (train_ratio + val_ratio)):]
 
     return train_df, val_df, test_df
 
@@ -38,7 +41,7 @@ def load_temp_dataset():
     dfs = []
     key = None
     for i in tqdm(range(2011, 2021, 1)):
-        df = pd.read_csv(f'data/hourly_TEMP_{i}.csv')
+        df = pd.read_csv(f'data/hourly_TEMP_{i}.csv', engine='c')
         df['Latitude'] = round(df['Latitude'], 4)
         df['Longitude'] = round(df['Longitude'], 4)
         groupby = df[df['State Name'] == 'Massachusetts'].groupby(['Latitude', 'Longitude'])
@@ -57,7 +60,6 @@ def compile_and_fit(model: Model, window, batch_size, epochs):
     model.compile(loss=tf.losses.MeanSquaredError(),
                   optimizer=tf.optimizers.Adam(),
                   metrics=[tf.metrics.MeanAbsoluteError()])
-
     X_train, y_train = window.train
     X_val, y_val = window.val
     history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs,
@@ -69,7 +71,7 @@ def compile_and_fit(model: Model, window, batch_size, epochs):
 class WindowGenerator:
     def __init__(self, input_width, label_width, shift,
                  train_df, val_df, test_df,
-                 label_columns=None):
+                 out_dir, label_columns=None, ):
         # Store the raw data.
         self.train_df = train_df
         self.val_df = val_df
@@ -97,6 +99,8 @@ class WindowGenerator:
         self.labels_slice = slice(self.label_start, None)
         self.label_indices = np.arange(self.total_window_size)[self.labels_slice]
 
+        self.out_dir = out_dir
+
     def __repr__(self):
         return '\n'.join([
             f'Total window size: {self.total_window_size}',
@@ -113,9 +117,11 @@ class WindowGenerator:
         plot_col_index = self.column_indices[plot_col]
         max_n = min(max_subplots, len(inputs))
         fig, axes2d = plt.subplots(nrows=3, figsize=(12, 8))
+        if model is not None:
+            predictions = model(inputs[:max_n])
+
         for n in range(max_n):
-            axes2d[n].plot(self.input_indices, inputs[n, :, plot_col_index],
-                           label='Inputs', marker='.', zorder=-10)
+            axes2d[n].plot(self.input_indices, inputs[n, :, plot_col_index], label='Inputs', marker='.', zorder=-10)
             if self.label_columns:
                 label_col_index = self.label_columns_indices.get(plot_col, None)
             else:
@@ -127,7 +133,6 @@ class WindowGenerator:
             axes2d[n].scatter(self.label_indices, labels[n, :, label_col_index],
                               edgecolors='k', label='Labels', c='#2ca02c', s=64)
             if model is not None:
-                predictions = model(inputs)
                 axes2d[n].scatter(self.label_indices, predictions[n, :, label_col_index],
                                   marker='X', edgecolors='k', label='Predictions',
                                   c='#ff7f0e', s=64)
@@ -137,6 +142,8 @@ class WindowGenerator:
         fig.text(0.5, 0.015, 'Time, hours', va='center', ha='center')
         plt.tight_layout()
         plt.legend(loc='lower left')
+        fig_datetime = datetime.now().strftime("%Y-%m-%d %H-%M-%S-%f")
+        plt.savefig(os.path.join(self.out_dir, f'{fig_datetime}.png'))
         plt.show()
 
     def make_dataset(self, data):
@@ -165,3 +172,9 @@ class WindowGenerator:
     @property
     def example(self):
         return self.train
+
+
+def save_results(out_path, model_scores, agg):
+    # noinspection PyTypeChecker
+    model_scores.to_csv(f'{out_path}/results.csv', index=False)
+    agg.to_csv(f'{out_path}/agg.csv')

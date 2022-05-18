@@ -3,10 +3,9 @@ import os
 from datetime import datetime
 from itertools import cycle
 
-import matplotlib
 import numpy as np
 import torch
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
 from torch.distributions import Normal
 
 from benchmark.models.common import Model, batch_generator
@@ -19,15 +18,16 @@ logger.setLevel(logging.DEBUG)
 
 
 class NeuralOdeModel(Model):
-    def __init__(self, batch_size, out_steps, num_batches=10000, lr=2e-3):
+    def __init__(self, batch_size, out_steps, num_batches=9000, checkpoint_name=None, lr=0.01):
         self.device = torch.device('cpu')
         self.args, self.model = self.create_latent_ode_model()
-        self.experimentID = str(datetime.now())
+        self.experiment_id = str(datetime.now())
         self.lr = lr
         self.batch_size = batch_size
         self.num_batches = num_batches
         self.out_steps = out_steps
         self.viz = Visualizations(self.device)
+        self.checkpoint_name = checkpoint_name
 
     def create_latent_ode_model(self, input_dim=1, obsrv_std=0.01, z0_mean=0.0, z0_std=1.):
         class Args:
@@ -53,6 +53,7 @@ class NeuralOdeModel(Model):
         return args, model
 
     def compile_and_train(self, gen):
+        prev_state = torch.random.get_rng_state()
         optimizer = torch.optim.Adamax(self.model.parameters(), lr=self.lr)
         ckpt_path = self.get_checkpoint()
         self.model.train()
@@ -64,7 +65,7 @@ class NeuralOdeModel(Model):
 
         for itr in range(1, self.num_batches):
             optimizer.zero_grad()
-            utils.update_learning_rate(optimizer, decay_rate=0.999, lowest=self.lr / 10)
+            utils.update_learning_rate(optimizer, decay_rate=0.9999, lowest=self.lr / 10)
             kl_coef = self.update_kl_coef(itr, wait_until_kl_inc)
 
             batch_dict = self.to_batch_dict(next(train_gen))
@@ -72,11 +73,12 @@ class NeuralOdeModel(Model):
             train_res["loss"].backward()
             optimizer.step()
 
-            if itr % 50 == 0:
+            if itr % 100 == 0:
                 with torch.no_grad():
                     self.print_losses(itr, kl_coef, train_res, val_gen)
                     self.visualize_predictions(itr, test_dict)
         torch.save({'state_dict': self.model.state_dict()}, ckpt_path)
+        torch.random.set_rng_state(prev_state)
 
     def update_kl_coef(self, itr, wait_until_kl_inc):
         if itr // self.num_batches < wait_until_kl_inc:
@@ -88,13 +90,13 @@ class NeuralOdeModel(Model):
     def print_losses(self, itr, kl_coef, train_res, val_gen):
         gen = cycle(map(lambda x: self.to_batch_dict(x), val_gen))
         test_res = utils.compute_loss_all_batches(self.model, gen, self.args, n_batches=5,
-                                                  experimentID=self.experimentID, device=self.device,
+                                                  experimentID=self.experiment_id, device=self.device,
                                                   n_traj_samples=self.batch_size, kl_coef=kl_coef)
         now = datetime.now()
         message = f'''{now}: Itr {itr:04d} [Test seq (cond on sampled tp)]
                               | Loss {test_res["loss"].detach():.6f} | Likelihood {test_res["likelihood"].detach():.6f}
                               | KL fp {test_res["kl_first_p"]:.4f} | FP STD {test_res["std_first_p"]:.4f}|'''
-        logger.info(f'Experiment {self.experimentID}')
+        logger.info(f'Experiment {self.experiment_id}')
         logger.info(message)
         logger.info(f'KL coef: {kl_coef}')
         logger.info(f'Train loss (one batch): {train_res["loss"].detach()}')
@@ -106,31 +108,37 @@ class NeuralOdeModel(Model):
         now = datetime.now()
         print(f"{now}: plotting....")
         plot_id = itr // 10
-        self.viz.draw_all_plots_one_dim(test_dict, self.model, f'{self.experimentID}_{plot_id:03d}.png',
-                                        True, self.experimentID)
+        self.viz.draw_all_plots_one_dim(test_dict, self.model, f'{self.experiment_id}_{plot_id:03d}.png',
+                                        True, self.experiment_id)
         now = datetime.now()
         print(f"{now}: finished plotting")
 
     def get_checkpoint(self):
         experiments_dir = 'experiments'
-        ckpt_path = os.path.join(experiments_dir, "experiment_" + str(self.experimentID) + '.ckpt')
-        if os.path.exists(ckpt_path):
-            utils.get_ckpt_model(ckpt_path, self.model, self.device)
+        ckpt_path_save = os.path.join(experiments_dir, "experiment_" + str(self.experiment_id) + '.ckpt')
+        if self.checkpoint_name is not None:
+            ckpt_path_load = os.path.join(experiments_dir, "experiment_" + str(self.checkpoint_name) + '.ckpt')
+        else:
+            ckpt_path_load = ckpt_path_save
+
+        if os.path.exists(ckpt_path_load):
+            utils.get_ckpt_model(ckpt_path_load, self.model, self.device)
         else:
             os.makedirs(experiments_dir, exist_ok=True)
-        return ckpt_path
+        return ckpt_path_save
 
-    def to_batch_dict(self, batch):
+    def to_batch_dict(self, batch, observed_tp=0.5, base_steps=100):
+        max_tp_to_predict = observed_tp + observed_tp * self.out_steps / base_steps
         if len(batch) > 1:
             batch_input, batch_labels = batch
             batch_dict = {
-                'observed_data': torch.from_numpy(batch_input.copy()).type(torch.float32).to(self.device),
-                'observed_tp': torch.from_numpy(np.linspace(0, 0.5, batch_input.shape[1])).type(torch.float32)
+                'observed_data': torch.from_numpy(batch_input.copy()).float().to(self.device),
+                'observed_tp': torch.from_numpy(np.linspace(0, observed_tp, batch_input.shape[1])).float()
                     .to(self.device),
-                'data_to_predict': torch.from_numpy(batch_labels.copy()).type(torch.float32).to(self.device),
-                'tp_to_predict': torch.from_numpy(np.linspace(0.5, 1.0, batch_labels.shape[1])).type(torch.float32)
+                'data_to_predict': torch.from_numpy(batch_labels.copy()).float().to(self.device),
+                'tp_to_predict': torch.from_numpy(np.linspace(observed_tp, max_tp_to_predict, self.out_steps)).float()
                     .to(self.device),
-                'observed_mask': torch.from_numpy(np.ones_like(batch_input)).type(torch.float32).to(self.device),
+                'observed_mask': torch.from_numpy(np.ones_like(batch_input)).float().to(self.device),
                 'mask_predicted_data': None,
                 'labels': None,
                 'mode': 'extrap'
@@ -139,11 +147,11 @@ class NeuralOdeModel(Model):
             batch_input, = batch
             batch_dict = {
                 'observed_data': batch_input.type(torch.float32).to(self.device),
-                'observed_tp': torch.from_numpy(np.linspace(0, 0.5, batch_input.shape[1])).type(torch.float32)
+                'observed_tp': torch.from_numpy(np.linspace(0, observed_tp, batch_input.shape[1])).float()
                     .to(self.device),
-                'tp_to_predict': torch.from_numpy(np.linspace(0.5, 1.0, self.out_steps)).type(torch.float32)
+                'tp_to_predict': torch.from_numpy(np.linspace(observed_tp, max_tp_to_predict, self.out_steps)).float()
                     .to(self.device),
-                'observed_mask': torch.from_numpy(np.ones_like(batch_input)).type(torch.float32).to(self.device),
+                'observed_mask': torch.from_numpy(np.ones_like(batch_input)).float().to(self.device),
                 'mask_predicted_data': None,
                 'labels': None,
                 'mode': 'extrap'
@@ -171,9 +179,4 @@ class NeuralOdeModel(Model):
         custom_batch_size = len(y_eval)
         pred_y = self.predict_neural(data, custom_batch_size)
         pred_y = pred_y.cpu().detach().numpy()[0]
-        return mean_squared_error(y_eval.reshape(custom_batch_size, -1),
-                                  pred_y.reshape(custom_batch_size, -1))
-
-    def reset(self):
-        self.args, self.model = self.create_latent_ode_model()
-        self.experimentID = str(datetime.now())
+        return mean_absolute_error(y_eval.reshape(custom_batch_size, -1), pred_y.reshape(custom_batch_size, -1))
