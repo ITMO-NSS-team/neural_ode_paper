@@ -10,7 +10,7 @@ from tensorflow.python.keras.models import Model
 from tqdm import tqdm
 
 
-def get_dataset(dataset='temp', noise_level=0):
+def get_dataset(dataset='temp'):
     if dataset == 'temp':
         df = load_temp_dataset()
     elif dataset == 'venice':
@@ -19,22 +19,12 @@ def get_dataset(dataset='temp', noise_level=0):
     else:
         raise ValueError(f'Unknown dataset: {dataset}')
 
-    n = len(df)
-    train_ratio = 0.7
-    val_ratio = 0.2
-
     df_mean = df.mean()
     df_std = df.std()
 
     df = (df - df_mean) / df_std
 
-    df += np.random.normal(0, float(noise_level), size=df.shape)
-
-    train_df = df[:int(n * train_ratio)]
-    val_df = df[int(n * train_ratio):int(n * (train_ratio + val_ratio))]
-    test_df = df[int(n * (train_ratio + val_ratio)):]
-
-    return train_df, val_df, test_df
+    return df
 
 
 def load_temp_dataset():
@@ -69,13 +59,10 @@ def compile_and_fit(model: Model, window, batch_size, epochs):
 
 # Adapted from https://www.tensorflow.org/tutorials/structured_data/time_series
 class WindowGenerator:
-    def __init__(self, input_width, label_width, shift,
-                 train_df, val_df, test_df,
-                 out_dir, label_columns=None, ):
+    def __init__(self, input_width, label_width, shift, df, out_dir, label_columns=None,
+                 noise_level=0, train_ratio=0.7, val_ratio=0.2, seed=42):
         # Store the raw data.
-        self.train_df = train_df
-        self.val_df = val_df
-        self.test_df = test_df
+        self.df = df
 
         # Work out the label column indices.
         self.label_columns = label_columns
@@ -83,7 +70,7 @@ class WindowGenerator:
             self.label_columns_indices = {name: i for i, name in
                                           enumerate(label_columns)}
         self.column_indices = {name: i for i, name in
-                               enumerate(train_df.columns)}
+                               enumerate(df.columns)}
 
         # Work out the window parameters.
         self.input_width = input_width
@@ -100,6 +87,13 @@ class WindowGenerator:
         self.label_indices = np.arange(self.total_window_size)[self.labels_slice]
 
         self.out_dir = out_dir
+        self.noise_level = noise_level
+        self.seed = seed
+        self.dataset = self.make_dataset(self.df)
+        self.dataset_len = len(self.dataset[0])
+        self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
+        self.test_ratio = 1 - train_ratio - val_ratio
 
     def __repr__(self):
         return '\n'.join([
@@ -139,6 +133,7 @@ class WindowGenerator:
         font = {'size': 16}
         matplotlib.rc('font', **font)
         fig.text(0.0125, 0.5, 'Water level, cm (normed)', va='center', ha='center', rotation='vertical')
+        # fig.text(0.0125, 0.5, 'Temp, ℉ (normed)', va='center', ha='center', rotation='vertical')
         fig.text(0.5, 0.015, 'Time, hours', va='center', ha='center')
         plt.tight_layout()
         plt.legend(loc='lower left')
@@ -151,23 +146,34 @@ class WindowGenerator:
         ds_input = []
         ds_labels = []
         for i in range(0, len(data), self.input_width + self.label_width):
-            ds_input.append(data[i:i + self.input_width])
+            input_data = data[i:i + self.input_width]
+            ds_input.append(input_data + np.random.normal(0, float(self.noise_level), size=input_data.shape))
             ds_labels.append(data[i + self.input_width:i + self.input_width + self.label_width])
-        ds_input = np.array(ds_input[:-1])
-        ds_labels = np.array(ds_labels[:-1])
+
+        np.random.seed(self.seed)
+        perm = np.random.permutation(len(ds_input) - 1)
+        ds_input = np.array(ds_input[:-1])[perm]
+        ds_labels = np.array(ds_labels[:-1])[perm]
         return ds_input, ds_labels
 
     @property
     def train(self):
-        return self.make_dataset(self.train_df)
+        ds_input, ds_labels = self.dataset
+        ds_slice = slice(int(self.dataset_len * self.train_ratio))
+        return ds_input[ds_slice], ds_labels[ds_slice]
 
     @property
     def val(self):
-        return self.make_dataset(self.val_df)
+        ds_input, ds_labels = self.dataset
+        ds_slice = slice(int(self.dataset_len * self.train_ratio),
+                         int(self.dataset_len * (self.train_ratio + self.val_ratio)))
+        return ds_input[ds_slice], ds_labels[ds_slice]
 
     @property
     def test(self):
-        return self.make_dataset(self.test_df)
+        ds_input, ds_labels = self.dataset
+        ds_slice = slice(int(self.dataset_len * (self.train_ratio + self.val_ratio)), self.dataset_len)
+        return ds_input[ds_slice], ds_labels[ds_slice]
 
     @property
     def example(self):

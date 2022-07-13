@@ -20,7 +20,7 @@ parser.add_argument('--n-rep', type=int, default=5, help='Number of experiments 
 parser.add_argument('--dataset', type=str, default='venice', help='Dataset to load. Available: venice, temp')
 parser.add_argument('--models', nargs='+', help='List of models to use',
                     default=['repeater', 'autoreg', 'fc', 'lstm', 'latent_ode', 'closed_form'])
-parser.add_argument('--max-epochs', type=int, default=80, help='Number of epochs to fit keras models')
+parser.add_argument('--max-epochs', type=int, default=100, help='Number of epochs to fit keras models')
 parser.add_argument('--batch-size', type=int, default=32, help='Batch size for fitting keras models')
 parser.add_argument('--in-steps', type=int, default=100, help='Number of input points for each model')
 parser.add_argument('--out-steps', type=int, default=100, help='Number of points to predict for each model')
@@ -61,10 +61,10 @@ if __name__ == '__main__':
 
     model_scores = []
     for noise_level in args.noise_levels:
-        df_train, df_val, df_test = get_dataset(dataset=args.dataset, noise_level=noise_level)
+        df = get_dataset(dataset=args.dataset)
         multi_window = WindowGenerator(input_width=args.in_steps, label_width=args.out_steps, shift=args.out_steps,
-                                       train_df=df_train, test_df=df_test, val_df=df_val, out_dir=out_path,
-                                       label_columns=label_columns)
+                                       df=df, out_dir=out_path, label_columns=label_columns,
+                                       noise_level=noise_level)
 
         multi_window.plot()
         logger.info(f'Started experiment with noise level {noise_level}')
